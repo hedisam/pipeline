@@ -54,13 +54,15 @@ type StageParams interface {
 	// Info returns some arbitrary string for the stage in the pipeline that can be used by the StageRunner to
 	// annotate errors. It can be a specific name or simply the position of the stage in the pipeline.
 	Info() string
-	// AppendInfo returns a new copy of StageParams with extraInfo appended to the existing param's info. For instance,
-	// it can be used to add the worker's index in a worker pool StageRunner
+	// AppendInfo returns a new copy of StageParams with extraInfo appended to the existing StageParams's info.
+	// For instance, it can be used to append the worker's index in a worker pool StageRunner.
 	AppendInfo(extraInfo string) StageParams
 	// Input returns a read-only channel that will be used by the StageRunner to receive new incoming payload messages.
-	// It will be closed to denote the end of the stream.
+	// It will be closed to denote the end of the input stream.
 	Input() <-chan Payload
-	// WithInput replaces the existing Input channel and returns a copy of the new StageParams
+	// WithInput replaces the existing Input channel and returns a copy of the new StageParams.
+	// For example, it can be used in a 1-to-N broadcasting StageRunner where each worker needs to have an exclusive
+	// input stream channel which will be used by the main worker to push (broadcast) incoming payloads to each worker.
 	WithInput(<-chan Payload) StageParams
 	// Output returns a write-only channel used by the StageRunner to push the processed input payloads to the next
 	// stage.
