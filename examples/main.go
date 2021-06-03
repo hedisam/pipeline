@@ -70,10 +70,7 @@ func (s *source) Next(ctx context.Context) bool {
 	default:
 	}
 
-	if s.pos >= len(s.data) {
-		return false 
-	}
-	return true
+	return s.pos < len(s.data) && s.pos >= 0
 }
 
 func (s *source) Payload() pipeline.Payload {
