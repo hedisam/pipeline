@@ -71,3 +71,14 @@ type StageParams interface {
 	// payload processing step.
 	Error() chan<- error 
 }
+
+// Source is implemented by user-defined stream sources that generate Payload data, it's kind of an iterator.
+type Source interface {
+	// Next returns false if there's no new Payload to be streamed or in case of errors, otherwise it returns true.
+	Next(context.Context) bool 
+	// Payload returns the new next Payload which needs to be put through the stream flow. It should only be invoked if
+	// Next has returned true.
+	Payload() Payload
+	// Error returns the last error encountered by the input.
+	Error() error 
+}
