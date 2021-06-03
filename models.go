@@ -82,3 +82,9 @@ type Source interface {
 	// Error returns the last error encountered by the input.
 	Error() error 
 }
+
+// Sink defines a model for the final step of the Pipeline which needs to be implemented by the users.
+type Sink interface {
+	// Consume or process a Payload that has been emitted out of the final stage of the Pipeline.
+	Consume(context.Context, Payload) error 
+}
