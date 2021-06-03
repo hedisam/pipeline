@@ -91,9 +91,13 @@ func (p Pipeline) Process(ctx context.Context, source Source, sink Sink) error {
 	}()
 
 	// collect any emitted error and wrap them in a multi-error 
-	var err error 
+	var err error
 	for pErr := range errCh {
-		err = fmt.Errorf("%s: %w", err.Error(), pErr)
+		if err == nil {
+			err = pErr
+		} else {
+			err = fmt.Errorf("%s: %w", err.Error(), pErr)
+		}
 		// cancel the context so all the workers terminate 
 		ctxCancel()
 	}
