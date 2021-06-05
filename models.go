@@ -18,16 +18,16 @@ type Processor interface {
 	Process(context.Context, Payload) (Payload, error)
 }
 
-/* ProcessorFunc implements the Processor interface so that users can cast and use closures/functions with the expected
-signature without the need for a concrete struct that has implemented the Processor
-e.g.
-procF := func(ctx context.Context, p Payload) (Payload, error) {
-	// processing the input payload
-	// returning a new output-payload
-}
-// casting procF to a processor function to get a Processor-compatible processor
-proc := ProcessorFunc(procF)
-*/
+// ProcessorFunc implements the Processor interface so that users can cast and use closures/functions with the expected
+// signature without the need for a concrete struct that has implemented the Processor
+// e.g.
+// procF := func(ctx context.Context, p Payload) (Payload, error) {
+//	// processing the input payload
+//	// returning a new output-payload
+//
+// // casting procF to a processor function to get a Processor-compatible processor
+// proc := ProcessorFunc(procF)
+//
 type ProcessorFunc func(context.Context, Payload) (Payload, error) 
 
 // Process calls the closure/function that was casted to ProcessorFunc
