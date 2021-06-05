@@ -6,9 +6,11 @@ import "context"
 type Payload interface {
 	// Clone returns a deep-copy of the payload, used to avoid data races 
 	Clone() Payload 
-	// MarkAsProcessed indicates that this payload has been processed, should be used at the output sink stage of the 
-	// pipeline or when the payload is discarded
-	MarkAsProcessed() 
+	// MarkAsProcessed indicates that this payload has been processed, should be called at the pipeline's output sink
+	// worker or when the payload is discarded in a StageRunner.
+	// It should be invoked internally either by the sink worker or when it's dropped in the pipeline, not at
+	// the user level.
+	MarkAsProcessed(ctx context.Context, dropped bool) 
 }
 
 // Processor will be implemented and provided by the users who wish to process a payload

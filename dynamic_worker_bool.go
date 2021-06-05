@@ -92,8 +92,7 @@ func (p dynamicWorkerPool) worker(ctx context.Context, payload Payload, params S
 	if output == nil {
 		// the processor can send a nil output-payload to indicate that we should not continue 
 		// any more with this payload, but we mark it as processed before dropping it.
-		// todo: shouldn't we mark it as dropped instead of processed?
-		payload.MarkAsProcessed()
+		payload.MarkAsProcessed(ctx, true)
 		return 
 	}
 
@@ -105,8 +104,7 @@ func (p dynamicWorkerPool) worker(ctx context.Context, payload Payload, params S
 	case params.Output() <- output.Clone(): 
 		// processed payload emitted.
 	case <-ctx.Done():
-		// terminate and drop the payload 
-		// todo: should we mark it as dropped?
+		// terminate and drop the payload
 		return 
 	}
 }

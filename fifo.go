@@ -44,9 +44,7 @@ func (r fifo) Run(ctx context.Context, params StageParams) {
 			if output == nil {
 				// the processor can send a nil output-payload to indicate that we should not continue 
 				// any more with this payload, but we mark it as processed before dropping it.
-				// todo: maybe we should mark it as dropped. in that case we need to add a method to the Payload
-				// interface
-				payload.MarkAsProcessed()
+				payload.MarkAsProcessed(ctx, true)
 				// continue the loop to receive and process new messages 
 				continue
 			}

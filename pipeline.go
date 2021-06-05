@@ -145,8 +145,8 @@ func (p Pipeline) sinkWorker(ctx context.Context, sink Sink, inCh <-chan Payload
 				return 
 			}
 
-			// payload has been successfully consumed by the Sink stage 
-			payload.MarkAsProcessed()
+			// payload has been successfully consumed by the output Sink
+			payload.MarkAsProcessed(ctx, false)
 		}
 	}
 }

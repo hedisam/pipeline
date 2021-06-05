@@ -52,7 +52,7 @@ func (p *payload) Clone() pipeline.Payload {
 	return &clone 
 }
 
-func (p *payload) MarkAsProcessed() {
+func (p *payload) MarkAsProcessed(ctx context.Context, dropped bool) {
 	p.processed = true 
 }
 
