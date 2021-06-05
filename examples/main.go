@@ -99,7 +99,7 @@ func (s *sink) Consume(ctx context.Context, p pipeline.Payload) error {
 		return fmt.Errorf("invalid payload type")
 	}
 	s.processedData = append(s.processedData, data.data)
-	p.MarkAsProcessed()
+	
 	fmt.Println("[!] Sink received payload data:", data.data)
 	return nil 
 }
