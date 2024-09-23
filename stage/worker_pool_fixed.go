@@ -3,9 +3,10 @@ package stage
 import (
 	"context"
 	"fmt"
-	"pipeline/chans"
 	"slices"
 	"sync"
+
+	"github.com/hedisam/pipeline/chans"
 )
 
 type fixedSizeWorkerPool struct {

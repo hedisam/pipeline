@@ -7,7 +7,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"pipeline/chans"
+	"github.com/hedisam/pipeline/chans"
 )
 
 type dynamicWorkerPool struct {

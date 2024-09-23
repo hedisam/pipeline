@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"slices"
 
-	"pipeline/chans"
+	"github.com/hedisam/pipeline/chans"
 )
 
 // FIFORunner returns a Runner that processes input data sequentially, thereby maintaining their order.

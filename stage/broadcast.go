@@ -5,7 +5,7 @@ import (
 	"slices"
 	"sync"
 
-	"pipeline/chans"
+	"github.com/hedisam/pipeline/chans"
 )
 
 // WithMaxConcurrentBroadcasts controls how many messages to be sent concurrently by the Broadcast stage runner.

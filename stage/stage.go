@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"pipeline/chans"
+	"github.com/hedisam/pipeline/chans"
 )
 
 // Processor is a function that process an input payload and outputs the processed data.

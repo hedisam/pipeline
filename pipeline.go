@@ -9,8 +9,8 @@ import (
 	"strconv"
 	"sync"
 
-	"pipeline/chans"
-	"pipeline/stage"
+	"github.com/hedisam/pipeline/chans"
+	"github.com/hedisam/pipeline/stage"
 )
 
 // Source defines the methods required for a pipeline input source.
