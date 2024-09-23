@@ -44,15 +44,15 @@ func Broadcast(fns []Processor, opts ...Option) Runner {
 			for payload := range chans.ReceiveOrDoneSeq(ctx, in) {
 				for fn := range slices.Values(fns) {
 					dwp.process(ctx, fn, payload)
-					dwp.wg.Wait()
 				}
+				dwp.wg.Wait()
 			}
 
 			if cfg.sendEOF {
 				for fn := range slices.Values(fns) {
 					dwp.process(ctx, eofSignalProcessor(ctx, id, fn, dwp.outCh, dwp.errCh), nil)
-					dwp.wg.Wait()
 				}
+				dwp.wg.Wait()
 			}
 		}()
 		return dwp.outCh, dwp.errCh

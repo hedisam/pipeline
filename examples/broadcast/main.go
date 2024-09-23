@@ -5,6 +5,9 @@ import (
 	"flag"
 	"fmt"
 	"iter"
+	"math"
+	"math/big"
+	"time"
 
 	"github.com/sirupsen/logrus"
 
@@ -13,92 +16,128 @@ import (
 )
 
 func main() {
-	var n uint64
-	flag.Uint64Var(&n, "n", 100, "Number of records to generate")
+	var from int64
+	flag.Int64Var(&from, "from", 0, "Start checking from")
+	var to int64
+	flag.Int64Var(&to, "to", 100, "Finish checking at")
 	var workers uint
 	flag.UintVar(&workers, "workers", 4, "Number of workers")
 	flag.Parse()
 
 	logger := logrus.New()
 	logger.WithFields(logrus.Fields{
-		"records": n,
+		"from_n":  from,
+		"to_n":    to,
 		"workers": workers,
-	}).Info("Broadcasting....")
+	}).Info("Broadcasting...")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	src := pipeline.SeqSource(counterIter(n))
+	src := pipeline.SeqSource(counterIter(from, to))
 	p := pipeline.NewPipeline(src, printerSink())
+	now := time.Now()
 	err := p.Run(
 		ctx,
 		stage.Broadcast(
 			[]stage.Processor{
-				multiplier(2),
-				multiplier(3),
-				//multiplier(4),
-				//multiplier(5),
-				//multiplier(6),
+				isPrime(),
+				isPrimeSQRT(),
 			},
 			stage.WithMaxConcurrentBroadcasts(workers),
-			stage.WithEOFMessage(),
+			//stage.WithEOFMessage(),
 		),
 	)
 	if err != nil {
 		panic(err)
 	}
+	fmt.Println("Took:", time.Since(now))
 }
 
-type multiplied struct {
-	num    uint64
-	factor uint64
-	result uint64
+type isPrimePayload struct {
+	isPrime        bool
+	value          int64
+	method         string
+	srcStartedAt   *time.Time
+	checkStartedAt *time.Time
 }
 
-func multiplier(factor uint64) stage.Processor {
-	return func(ctx context.Context, payload any) (out any, drop bool, err error) {
-		if stage.IsEOFSignal(payload) {
-			return stage.EOFSignal{}, false, nil
-		}
-
-		vi, ok := payload.(uint64)
-		if !ok {
-			return nil, false, fmt.Errorf("received payload with unexpected type: %T", payload)
-		}
-
-		return multiplied{
-			num:    vi,
-			factor: factor,
-			result: vi * factor,
-		}, false, nil
-	}
-}
-
-func counterIter(cap uint64) iter.Seq[uint64] {
-	return func(yield func(uint642 uint64) bool) {
-		for i := range cap {
-			if !yield(i) {
+func counterIter(from, to int64) iter.Seq[isPrimePayload] {
+	return func(yield func(p isPrimePayload) bool) {
+		for i := from; i <= to; i++ {
+			if !yield(isPrimePayload{
+				value:        i,
+				srcStartedAt: ptr(time.Now()),
+			}) {
 				return
 			}
 		}
 	}
 }
 
-func printerSink() pipeline.Sink {
-	done := false
-	return func(ctx context.Context, out any) error {
-		if stage.IsEOFSignal(out) {
-			if !done {
-				fmt.Println("[!] Done")
-				done = true
-			}
-			return nil
+func isPrime() stage.Processor {
+	return func(ctx context.Context, payload any) (out any, drop bool, err error) {
+		v, ok := payload.(isPrimePayload)
+		if !ok {
+			return nil, false, fmt.Errorf("isPrime received payload with unexpected type: %T", payload)
 		}
-		m, ok := out.(multiplied)
+
+		now := time.Now()
+		return isPrimePayload{
+			isPrime:        big.NewInt(v.value).ProbablyPrime(0),
+			value:          v.value,
+			method:         "bigi",
+			checkStartedAt: ptr(now),
+			srcStartedAt:   v.srcStartedAt,
+		}, false, nil
+	}
+}
+
+func isPrimeSQRT() stage.Processor {
+	fn := func(v int64) bool {
+		for i := int64(2); i <= int64(math.Floor(math.Sqrt(float64(v)))); i++ {
+			if v%i == 0 {
+				return false
+			}
+		}
+		return v > 1
+	}
+
+	return func(ctx context.Context, payload any) (out any, drop bool, err error) {
+		v, ok := payload.(isPrimePayload)
+		if !ok {
+			return nil, false, fmt.Errorf("isPrimeSQRT received payload with unexpected type: %T", payload)
+		}
+
+		now := time.Now()
+		return isPrimePayload{
+			isPrime:        fn(v.value),
+			value:          v.value,
+			method:         "sqrt",
+			checkStartedAt: &now,
+			srcStartedAt:   v.srcStartedAt,
+		}, false, nil
+	}
+}
+
+func printerSink() pipeline.Sink {
+	i := 0
+	return func(ctx context.Context, out any) error {
+		i++
+		r, ok := out.(isPrimePayload)
 		if !ok {
 			return fmt.Errorf("sink received output payload with unexpected type: %T", out)
 		}
-		fmt.Printf("[+] sink: %d * %d == %d\n", m.num, m.factor, m.result)
+
+		now := time.Now()
+		fmt.Printf("[!] method: %s num: %d isPrime: %v src2sink: %s check2sink: %s\n", r.method, r.value, r.isPrime, now.Sub(*r.srcStartedAt), now.Sub(*r.checkStartedAt))
+		if i%2 == 0 {
+			println("------------")
+		}
 		return nil
 	}
+}
+
+func ptr[T any](v T) *T {
+	return &v
 }
