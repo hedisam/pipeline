@@ -2,160 +2,132 @@ package pipeline
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
+	"slices"
 	"strconv"
 	"sync"
+
+	"pipeline/chans"
+	"pipeline/stage"
 )
 
-// Pipeline implements a modular, multi-stage pipeline which is constructed out of an input source, an output sink and
-// zero or more processing stages.
+// Source defines the methods required for a pipeline input source.
+type Source interface {
+	Next(ctx context.Context) (any, error)
+}
+
+// Sink defines the interface for a pipeline sink.
+type Sink func(ctx context.Context, out any) error
+
+// Pipeline is the pipeline orchestrator.
 type Pipeline struct {
-	stages []StageRunner
+	sources []Source
+	sink    Sink
 }
 
-// New returns a new pipeline instance where payloads will traverse each one of the specified stages.
-func New(stages ...StageRunner) Pipeline {
-	return Pipeline{stages: stages}
-}
+// Option defines a function that can be used to config Pipeline with more options
+type Option func(p *Pipeline)
 
-// Process reads the contents of the specified source, send them through the various stages of the pipeline and directs
-// result to the specified sink. It returns back any errors that may have occurred through the pipeline stream.
-//
-// Calls to Process block until:
-// - all data from the source has been processed OR
-// - an error occurs OR
-// - the supplied context expires or gets cancelled 
-// Process is thread-safe and can be invoked concurrently with different sources and sinks.
-func (p Pipeline) Process(ctx context.Context, source Source, sink Sink) error {
-	var wg sync.WaitGroup
-	pCtx, ctxCancel := context.WithCancel(ctx)
-	defer ctxCancel()
-
-	// Allocate channels to wire up together the source, the pipeline stages and the output sink. The output of the ith 
-	// stage is used as an input for the i+1th stage. We need to allocate one extra channel than the number of stages
-	// to wire up the last stage to the output sink.
-	stagesCh := make([]chan Payload, len(p.stages)+1)
-	// here we create a buffered channel for errors with a capacity equal to the number of stages plus the
-	// and output sink workers
-	errCh := make(chan error, len(p.stages)+2)
-	for i := 0; i < len(stagesCh); i++ {
-		stagesCh[i] = make(chan Payload)
-	}
-
-	// we want to have an asynchronous pipeline so we spawn a goroutine for each stage of the pipeline
-	for i := 0; i < len(p.stages); i++ {
-		wg.Add(1)
-		go func(stageIndex int) {
-			defer wg.Done()
-			// here we signal the next stage that no more data is available, this is fine since each stage is the only
-			// one that writes to the next stage's input channel. Also note that the input sink is the only one who
-			// writes to the first stage's input channel so it will be closed by the input sink goroutine.
-			defer close(stagesCh[stageIndex+1])
-
-			params := workerParams{
-				info: strconv.Itoa(stageIndex),
-				input: stagesCh[stageIndex],
-				output: stagesCh[stageIndex+1],
-				errors: errCh,
-			}
-
-			stage := p.stages[stageIndex]
-			stage.Run(pCtx, params)
-		}(i)
-	}
-
-	// start the input source worker 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		// signal the first stage that no more data is available
-		defer close(stagesCh[0])
-
-		p.sourceWorker(pCtx, source, stagesCh[0], errCh)
-	}()
-
-	// start the sink worker 
-	wg.Add(1)
-	go func() {
-		defer wg.Done() 
-
-		lastStageCh := stagesCh[len(stagesCh)-1]
-		p.sinkWorker(pCtx, sink, lastStageCh, errCh)
-	}()
-
-	// close the error channel once all workers exit 
-	go func() {
-		wg.Wait()
-		close(errCh)
-		ctxCancel()
-	}()
-
-	// collect any emitted error and wrap them in a multi-error 
-	var err error
-	for pErr := range errCh {
-		if err == nil {
-			err = pErr
-		} else {
-			err = fmt.Errorf("%s: %w", err.Error(), pErr)
+// WithSources can be used to provide more sources. It should be used when you have more than one pipeline source.
+func WithSources(sources ...Source) Option {
+	return func(p *Pipeline) {
+		if len(sources) > 0 {
+			p.sources = append(p.sources, sources...)
 		}
-		// cancel the context so all the workers terminate 
-		ctxCancel()
+	}
+}
+
+// NewPipeline returns a new instance of Pipeline.
+func NewPipeline(src Source, sink Sink, options ...Option) *Pipeline {
+	p := &Pipeline{
+		sources: []Source{src},
+		sink:    sink,
 	}
 
+	for o := range slices.Values(options) {
+		o(p)
+	}
+
+	return p
+}
+
+// Run runs the pipeline for the provided stages.
+// If no stage is provided, it will pass the data directly form the source(s) to the sink.
+// Run blocks until either an error is occurred or all sources, stages and the sink have terminated.
+func (p *Pipeline) Run(ctx context.Context, stages ...stage.Runner) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	inputChans := make([]<-chan any, len(stages)+1)      // +1 for the sink input
+	errorChans := make([]<-chan error, 0, len(stages)+2) // +2 for source and sink
+
+	srcOutput, srcErrChan := p.startSources(ctx)
+	inputChans[0] = srcOutput
+	errorChans = append(errorChans, srcErrChan)
+
+	for i, stageRunner := range stages {
+		outCh, errCh := stageRunner(ctx, strconv.Itoa(i), inputChans[i])
+		inputChans[i+1] = outCh
+		errorChans = append(errorChans, errCh)
+	}
+
+	sinkErrCh := p.startSink(ctx, inputChans[len(inputChans)-1])
+	errorChans = append(errorChans, sinkErrCh)
+
+	err, _ := chans.ReceiveOrDone(ctx, chans.FanIn(ctx, errorChans...))
 	return err
 }
 
-// sourceWorker is a helper function runned by the pipeline to facilitate the asynchronous polling of the input source.
-func (p Pipeline) sourceWorker(ctx context.Context, source Source, outCh chan<- Payload, errCh chan<- error) {
-	for source.Next(ctx) {
-		payload := source.Payload()
+func (p *Pipeline) startSources(ctx context.Context) (<-chan any, <-chan error) {
+	sourcesWG := &sync.WaitGroup{}
+	outCh := make(chan any)
+	errCh := make(chan error)
 
-		select {
-		case <-ctx.Done():
-			return 
-		case outCh <- payload:
-		}
+	for i, src := range p.sources {
+		sourcesWG.Add(1)
+		go func() {
+			defer sourcesWG.Done()
+
+			for {
+				payload, err := src.Next(ctx)
+				if err != nil {
+					if !errors.Is(err, io.EOF) {
+						_ = chans.SendOrDone(ctx, errCh, fmt.Errorf("next payload from source %d: %w", i, err))
+					}
+					return
+				}
+
+				ok := chans.SendOrDone(ctx, outCh, payload)
+				if !ok {
+					return
+				}
+			}
+		}()
 	}
 
-	// check for errors 
-	err := source.Error()
-	if err != nil {
-		wrappedErr := fmt.Errorf("pipeline source: %w", err)
-		p.maybeEmitError(wrappedErr, errCh)
-	}
+	go func() {
+		sourcesWG.Wait()
+		close(outCh)
+		close(errCh)
+	}()
+
+	return outCh, errCh
 }
 
-// sinkWorker is helper function used by the pipeline to push the payloads to the user-defined Sink stage.
-func (p Pipeline) sinkWorker(ctx context.Context, sink Sink, inCh <-chan Payload, errCh chan<- error) {
-	for {
-		select {
-		case <-ctx.Done():
-			return 
-		case payload, ok := <-inCh:
-			if !ok {
-				// the input channel is closed, no more data.
-				return 
-			}
+func (p *Pipeline) startSink(ctx context.Context, in <-chan any) <-chan error {
+	errCh := make(chan error)
+	go func() {
+		defer close(errCh)
 
-			// dispatch the payload to the sink
-			err := sink.Consume(ctx, payload)
+		for payload := range chans.ReceiveOrDoneSeq(ctx, in) {
+			err := p.sink(ctx, payload)
 			if err != nil {
-				wrappedErr := fmt.Errorf("pipeline sink: %w", err)
-				p.maybeEmitError(wrappedErr, errCh)
-				return 
+				_ = chans.SendOrDone(ctx, errCh, fmt.Errorf("sink: %w", err))
+				return
 			}
-
-			// payload has been successfully consumed by the output Sink
-			payload.MarkAsProcessed(ctx, false)
 		}
-	}
-}
-
-// maybeEmitError attempts to queue err to a buffered error channel. If the
-// channel is full, the error is dropped.
-func (p Pipeline) maybeEmitError(err error, errCh chan<- error) {
-	select {
-	case errCh <- err: // error emitted.
-	default: // error channel is full with other errors.
-	}
+	}()
+	return errCh
 }
