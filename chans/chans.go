@@ -75,3 +75,60 @@ func FanIn[T any](ctx context.Context, channels ...<-chan T) <-chan T {
 
 	return out
 }
+
+// Tee2 duplicates every value from the input channel `in` into two output channels.
+// It returns two read-only channels, each of which receives the full sequence of values.
+// Both output channels are closed when `in` is closed or the context `ctx` is cancelled.
+func Tee2[T any](ctx context.Context, in <-chan T) (<-chan T, <-chan T) {
+	out1 := make(chan T)
+	out2 := make(chan T)
+
+	go func() {
+		defer close(out1)
+		defer close(out2)
+
+		for data := range ReceiveOrDoneSeq(ctx, in) {
+			// create shadowed local chans so that by reassigning them to nil after a successful send,
+			// we ensure that each of the two sends happens once (sending to a nil channel blocks).
+			out1 := out1
+			out2 := out2
+			for range 2 {
+				select {
+				case <-ctx.Done():
+					return
+				case out1 <- data:
+					out1 = nil
+				case out2 <- data:
+					out2 = nil
+				}
+			}
+		}
+	}()
+
+	return out1, out2
+}
+
+// OnDone invokes the callback function `fn` in a new goroutine when either:
+// 1. The context `ctx` is cancelled, or
+// 2. The input channel `in` is closed.
+// This allows you to run cleanup or notification logic once the pipeline terminates.
+//
+// Note: channels are not broadcast. OnDone will consume a value (or detect closure)
+// from `in`, which means it may remove that value before other consumers see it.
+// To avoid dropping values for other consumers, consider using Tee2 to split the
+// input into a dedicated notification channel for OnDone and a separate channel for
+// regular processing.
+func OnDone[T any](ctx context.Context, in <-chan T, fn func(ctx context.Context)) {
+	go func() {
+		select {
+		case <-ctx.Done():
+			fn(ctx)
+			return
+		case _, ok := <-in:
+			if !ok {
+				fn(ctx)
+				return
+			}
+		}
+	}()
+}
