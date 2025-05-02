@@ -23,8 +23,9 @@ type Sink func(ctx context.Context, out any) error
 
 // Pipeline is the pipeline orchestrator.
 type Pipeline struct {
-	sources []Source
-	sink    Sink
+	sources            []Source
+	sequentialSourcing bool
+	sink               Sink
 }
 
 // Option defines a function that can be used to config Pipeline with more options
@@ -36,6 +37,14 @@ func WithSources(sources ...Source) Option {
 		if len(sources) > 0 {
 			p.sources = append(p.sources, sources...)
 		}
+	}
+}
+
+// WithSequentialSourcing is used to make the pipeline process the provided sources (if more than one) sequentially.
+// It will drain the first source then moves on to the next one and so on until the last source is drained.
+func WithSequentialSourcing() Option {
+	return func(p *Pipeline) {
+		p.sequentialSourcing = true
 	}
 }
 
@@ -85,26 +94,43 @@ func (p *Pipeline) startSources(ctx context.Context) (<-chan any, <-chan error) 
 	outCh := make(chan any)
 	errCh := make(chan error)
 
-	for i, src := range p.sources {
+	consumeSource := func(ctx context.Context, src Source, i int) {
+		for {
+			payload, err := src.Next(ctx)
+			if err != nil {
+				if !errors.Is(err, io.EOF) {
+					_ = chans.SendOrDone(ctx, errCh, fmt.Errorf("next payload from sequential source %d: %w", i, err))
+				}
+				return
+			}
+
+			ok := chans.SendOrDone(ctx, outCh, payload)
+			if !ok {
+				return
+			}
+		}
+	}
+
+	if p.sequentialSourcing {
 		sourcesWG.Add(1)
 		go func() {
 			defer sourcesWG.Done()
 
-			for {
-				payload, err := src.Next(ctx)
-				if err != nil {
-					if !errors.Is(err, io.EOF) {
-						_ = chans.SendOrDone(ctx, errCh, fmt.Errorf("next payload from source %d: %w", i, err))
-					}
-					return
-				}
-
-				ok := chans.SendOrDone(ctx, outCh, payload)
-				if !ok {
-					return
-				}
+			for i, src := range p.sources {
+				consumeSource(ctx, src, i)
 			}
 		}()
+	}
+
+	if !p.sequentialSourcing {
+		for i, src := range p.sources {
+			sourcesWG.Add(1)
+			go func() {
+				defer sourcesWG.Done()
+
+				consumeSource(ctx, src, i)
+			}()
+		}
 	}
 
 	go func() {
