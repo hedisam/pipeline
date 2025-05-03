@@ -3,6 +3,7 @@ package stage
 import (
 	"context"
 	"fmt"
+	"iter"
 
 	"github.com/hedisam/pipeline/chans"
 )
@@ -10,6 +11,16 @@ import (
 // Processor is a function that process an input payload and outputs the processed data.
 // The implementation should return (drop = true) to drop the payload and not send it to the next stage.
 type Processor func(ctx context.Context, payload any) (out any, drop bool, err error)
+
+// SplitterProcessor transforms a single input payload into zero or more output
+// payloads.
+//
+// It returns an iterator (`iter.Seq[any]`) that yields each derived payload.
+// Setting `drop == true` tells the Splitter runner that the original payload should be
+// discarded and the iterator (if any) will not be consumed.
+//
+// SplitterProcessor can only be used with a SplitterRunner.
+type SplitterProcessor func(ctx context.Context, payload any) (iterator iter.Seq[any], drop bool, err error)
 
 // Runner takes a stage index and an input channel; and returns two read-only channels,
 // one for processed payloads and one for errors, respectively.
