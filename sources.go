@@ -24,7 +24,10 @@ type seqSource[T any] struct {
 }
 
 // Next implements Source.
-func (s *seqSource[T]) Next(_ context.Context) (any, error) {
+func (s *seqSource[T]) Next(ctx context.Context) (any, error) {
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
 	in, ok := s.next()
 	if !ok {
 		s.stop()
@@ -52,7 +55,11 @@ type csvSource struct {
 }
 
 // Next implements Source.
-func (s *csvSource) Next(_ context.Context) (any, error) {
+func (s *csvSource) Next(ctx context.Context) (any, error) {
+	if ctx.Err() != nil {
+		_ = s.f.Close()
+		return nil, ctx.Err()
+	}
 	record, err := s.r.Read()
 	if err != nil {
 		_ = s.f.Close()
